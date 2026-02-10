@@ -7,3 +7,7 @@
 data/input/
 data/output/
 *.log
+.sh_history
+.claude/commands
+.config/rstudio
+.local/share/rstudio
