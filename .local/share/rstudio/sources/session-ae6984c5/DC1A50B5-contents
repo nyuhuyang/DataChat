@@ -1,9 +1,0 @@
-.DS_Store
-.Rproj.user/
-.Rhistory
-.RData
-.Ruserdata
-.cache/
-data/input/
-data/output/
-*.log

@@ -10,9 +10,12 @@ Global working rules (must follow strictly):
 
 Current focus scope:
 
-* By default, focus ONLY on `app.R`.
-* Treat `app.R` as the single source of truth.
-* Other files may exist, but must be ignored unless I explicitly say otherwise.
+* Focus on the core application files:
+  - **`app.R`** - Main Shiny application (single-file, ~1650 lines)
+  - **`R/presets.R`** - Preset/template system (sourced by app.R)
+  - **`R/templates/`** - Preset template scripts (loaded dynamically)
+* Treat these three as the single source of truth for app logic and functionality.
+* Other files (docs, data, config) may exist, but ignore unless explicitly mentioned.
 
 Current task constraints:
 

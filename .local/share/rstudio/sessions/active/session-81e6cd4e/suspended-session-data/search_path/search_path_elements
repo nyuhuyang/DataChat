@@ -1,6 +1,7 @@
 .GlobalEnv
-package:arrow
 package:tibble
+package:arrow
+package:networkD3
 package:shinyjs
 package:readxl
 package:readr

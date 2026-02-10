@@ -1,19 +1,3 @@
-ls
-git init 
-git branch
-git add -A
-git config --get user.name
-tree data
-ls data
-apt-get update && apt-get install -y libglpk40
-mkdir -p .claude/commands
-mkdir -p .claude/commands/update-md.md <<'EOF'
-cat > .claude/commands/update-claude-md.md <<'EOF'
- echo 03B7D211 && echo $HISTCONTROL && /usr/bin/env && echo 9EB98AC0
- 
-
-mkdir -p .claude/commands
-cat > .claude/commands/update-claude-md.md <<'EOF'
 # /update-claude-md
 
 You are working in THIS repository. Your job is to update the project's CLAUDE.md as a durable, low-noise "future constraint" file.
@@ -44,5 +28,3 @@ Use this structure (keep sections short):
 - If you are unsure, add a short TODO line instead of inventing facts.
 
 Now: open CLAUDE.md (create if missing) and apply the update.
-EOF
-

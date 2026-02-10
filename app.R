@@ -7,6 +7,7 @@ library(httr2)
 library(readr)
 library(readxl)
 library(shinyjs)
+library(networkD3)
 
 # Source preset system helpers
 source("R/presets.R")
@@ -206,7 +207,11 @@ preview_and_summarize <- function(file_path, max_rows = 100) {
 generate_r_code <- function(user_query, schema_text) {
   query_lower <- tolower(user_query)
 
-  if (grepl("summary", query_lower)) {
+  if (grepl("network|graph|force", query_lower)) {
+    return(
+      "if (!exists('df_nodes') || !exists('df_edges')) {\n  stop('Network view requires df_nodes and df_edges. Select one nodes dataset and one edges dataset.')\n}\n\nresolve_col <- function(df, candidates) {\n  nms <- names(df)\n  lower <- tolower(nms)\n  idx <- match(candidates, lower)\n  idx <- idx[!is.na(idx)][1]\n  if (is.na(idx)) return(NA_character_)\n  nms[idx]\n}\n\nnodes <- df_nodes\nedges <- df_edges\n\nnode_id_col <- resolve_col(nodes, c('node_id', 'id'))\nnode_label_col <- resolve_col(nodes, c('node_symbol', 'name', 'label'))\nedge_from_col <- resolve_col(edges, c('node_from', 'from', 'source'))\nedge_to_col <- resolve_col(edges, c('node_to', 'to', 'target'))\nnode_type_col <- resolve_col(nodes, c('node_type', 'type', 'category', 'group'))\n\nif (is.na(node_id_col) || is.na(node_label_col) || is.na(edge_from_col) || is.na(edge_to_col)) {\n  stop(paste(\n    'Missing required columns.\\n',\n    'Nodes need one of: node_id/id and node_symbol/name/label.\\n',\n    'Edges need one of: node_from/from/source and node_to/to/target.\\n',\n    'Nodes columns:', paste(names(nodes), collapse = ', '), '\\n',\n    'Edges columns:', paste(names(edges), collapse = ', ')\n  ))\n}\n\nnodes$node_key <- as.character(nodes[[node_id_col]])\nnodes$label <- as.character(nodes[[node_label_col]])\n\nedges$from <- as.character(edges[[edge_from_col]])\nedges$to <- as.character(edges[[edge_to_col]])\n\nfrom_idx <- match(edges$from, nodes$node_key)\nto_idx <- match(edges$to, nodes$node_key)\nkeep <- !is.na(from_idx) & !is.na(to_idx)\n\nif (sum(!keep) > 0) {\n  print(paste('Dropped edges with missing nodes:', sum(!keep)))\n}\n\nif (sum(keep) == 0) {\n  stop('No edges matched nodes after ID alignment.')\n}\n\nlinks <- data.frame(\n  source = from_idx[keep] - 1,\n  target = to_idx[keep] - 1,\n  value = 1\n)\n\nnodes_plot <- data.frame(\n  label = nodes$label,\n  group = if (!is.na(node_type_col)) as.character(nodes[[node_type_col]]) else 'node'\n)\n\nresult_plot <- networkD3::forceNetwork(\n  Links = links,\n  Nodes = nodes_plot,\n  Source = 'source',\n  Target = 'target',\n  Value = 'value',\n  NodeID = 'label',\n  Group = 'group',\n  opacity = 0.9,\n  zoom = TRUE,\n  fontSize = 12\n)\n"
+    )
+  } else if (grepl("summary", query_lower)) {
     return("print(summary(df))\nresult_table <- data.frame(\n  Variable = names(df),\n  Type = sapply(df, class),\n  NonNA_Count = colSums(!is.na(df))\n)")
   } else if (grepl("hist|distribution", query_lower)) {
     return("numeric_cols <- names(df)[sapply(df, is.numeric)]\nif (length(numeric_cols) > 0) {\n  result_plot <- ggplot(df, aes_string(x = numeric_cols[1])) + \n    geom_histogram(bins = 30, fill = '#6c757d', alpha = 0.7, color = 'white') + \n    theme_minimal() + \n    ggtitle(paste('Distribution of', numeric_cols[1]))\n} else {\n  print('No numeric columns to plot')\n}")
@@ -659,7 +664,7 @@ ui <- page_sidebar(
         ),
         nav_panel(
           "Plot",
-          plotOutput("artifact_plot", height = "500px")
+          uiOutput("artifact_plot_ui")
         ),
         nav_panel(
           "Generated R Code",
@@ -696,7 +701,9 @@ server <- function(input, output, session) {
     logs = "",
     generated_code = "",
     result_table = NULL,
-    result_plot = NULL
+    result_plot = NULL,
+    hide_colnames = FALSE,
+    selected_files = character(0)
   )
 
   # Dataset metadata for Sources section
@@ -895,8 +902,10 @@ server <- function(input, output, session) {
   observeEvent(input$input_files_list, {
     selected_files <- input$input_files_list
     if (is.null(selected_files) || length(selected_files) == 0) {
+      artifacts$selected_files <- character(0)
       return()
     }
+    artifacts$selected_files <- selected_files
 
     for (file_path in selected_files) {
       file_name <- basename(file_path)
@@ -1165,8 +1174,21 @@ server <- function(input, output, session) {
 
   # Send message handler - supports both preset and free-text modes
   observeEvent(input$send_btn, {
+    # Resolve selected source IDs from checked files
+    selected_files <- artifacts$selected_files
+    selected_ids <- character(0)
+    if (!is.null(selected_files) && length(selected_files) > 0) {
+      selected_names <- basename(selected_files)
+      selected_ids <- vapply(data_sources$source_order, function(id) {
+        src <- data_sources$sources[[id]]
+        if (!is.null(src) && src$name %in% selected_names) id else NA_character_
+      }, character(1))
+      selected_ids <- selected_ids[!is.na(selected_ids)]
+    }
+
     # Determine mode from slash command in message (e.g., /node_type_distribution)
     preset_id <- NULL
+    preset_params <- list()
     if (!is.null(input$user_input) && nzchar(trimws(input$user_input))) {
       cmd <- trimws(input$user_input)
       cmd <- sub("^/+", "/", cmd)
@@ -1176,6 +1198,25 @@ server <- function(input, output, session) {
         preset_ids <- vapply(list_presets(), function(p) p$id, character(1))
         if (token %in% preset_ids) {
           preset_id <- token
+          remainder <- trimws(sub(paste0("^/", token, "\\b"), "", cmd))
+          if (nzchar(remainder)) {
+            parts <- strsplit(remainder, "\\s+")[[1]]
+            for (part in parts) {
+              if (!grepl("=", part, fixed = TRUE)) next
+              key <- sub("=.*$", "", part)
+              val <- sub("^[^=]*=", "", part)
+              # strip surrounding quotes for values like node_symbol="caffeine"
+              if (grepl('^".*"$', val) || grepl("^'.*'$", val)) {
+                val <- substring(val, 2, nchar(val) - 1)
+              }
+              if (key == "" || val == "") next
+              if (!is.null(preset_params[[key]])) {
+                preset_params[[key]] <- c(preset_params[[key]], val)
+              } else {
+                preset_params[[key]] <- val
+              }
+            }
+          }
         }
       }
     }
@@ -1184,7 +1225,10 @@ server <- function(input, output, session) {
     if (!is_preset_mode) {
       # Free text mode
       req(input$user_input)
-      req(active_dataset())
+      if (length(selected_ids) == 0) {
+        shinyjs::runjs("alert('Please select at least one dataset from the left list.')")
+        return()
+      }
 
       user_msg <- input$user_input
       if (user_msg == "") return()
@@ -1204,13 +1248,20 @@ server <- function(input, output, session) {
 
       progress$set(message = "Generating code", value = 2)
 
-      # Get selected sources
-      sources_list <- get_selected_sources(data_sources, selected_sources)
+      # Build selected sources list by type
+      sources_list <- list()
+      for (sid in selected_ids) {
+        src <- data_sources$sources[[sid]]
+        if (is.null(src)) next
+        if (src$type == "nodes") sources_list$nodes <- src
+        if (src$type == "edges") sources_list$edges <- src
+        if (src$type == "metadata") sources_list$metadata <- src
+      }
 
       # Generate schema text for LLM context - from all available sources
-      schema_text <- if (length(data_sources$source_order) > 0) {
+      schema_text <- if (length(selected_ids) > 0) {
         schema_parts <- c()
-        for (source_id in data_sources$source_order) {
+        for (source_id in selected_ids) {
           source <- data_sources$sources[[source_id]]
           schema_parts <- c(schema_parts, paste0(
             "[", toupper(source$type), "] ", source$name, " (", source$row_count, "x", source$col_count, ")\n",
@@ -1219,7 +1270,7 @@ server <- function(input, output, session) {
         }
         paste(schema_parts, collapse = "\n\n")
       } else {
-        generate_schema_text(active_dataset())
+        "No selected datasets."
       }
 
       # Generate R code (rule-based mode)
@@ -1239,6 +1290,7 @@ server <- function(input, output, session) {
       # Store results
       artifacts$result_table <- exec_result$result_table
       artifacts$result_plot <- exec_result$result_plot
+      artifacts$hide_colnames <- FALSE
 
       # Create run record with source tracking
       run_id <- paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
@@ -1299,10 +1351,8 @@ server <- function(input, output, session) {
 
     } else {
       # Preset mode
-      # Use all loaded sources for presets
-      selected_ids <- data_sources$source_order
       if (length(selected_ids) == 0) {
-        shinyjs::runjs("alert('Please load at least one dataset to run a preset.')")
+        shinyjs::runjs("alert('Please select at least one dataset from the left list.')")
         return()
       }
 
@@ -1352,13 +1402,14 @@ server <- function(input, output, session) {
         code = template_code,
         datasets = datasets_for_template,
         selected = selected_ids,
-        params = list()
+        params = preset_params
       )
 
       # Store results
       artifacts$result_table <- template_result$result_table
       artifacts$result_plot <- template_result$result_plot
       artifacts$generated_code <- template_code
+      artifacts$hide_colnames <- (preset_id == "head" && length(selected_ids) > 1)
       artifacts$logs <- paste(
         artifacts$logs,
         paste0("[", format(Sys.time(), "%H:%M:%S"), "] Preset: ", preset_label),
@@ -1415,18 +1466,51 @@ server <- function(input, output, session) {
   # Artifact table output
   output$artifact_table <- DT::renderDataTable({
     if (is.null(artifacts$result_table)) {
-      return(data.frame(Message = "No table result yet. Execute code that creates 'result_table'."))
+      df <- data.frame(Message = "No table result yet. Execute code that creates 'result_table'.")
+      return(DT::datatable(
+        df,
+        options = list(pageLength = 25, scrollX = TRUE),
+        rownames = FALSE,
+        colnames = if (artifacts$hide_colnames) rep("", ncol(df)) else colnames(df)
+      ))
     }
-    artifacts$result_table
-  }, options = list(pageLength = 10, scrollX = TRUE))
+    df <- artifacts$result_table
+    DT::datatable(
+      df,
+      options = list(pageLength = 25, scrollX = TRUE),
+      rownames = FALSE,
+      colnames = if (artifacts$hide_colnames) rep("", ncol(df)) else colnames(df)
+    )
+  })
 
   # Artifact plot output
+  output$artifact_plot_ui <- renderUI({
+    if (is.null(artifacts$result_plot)) {
+      plotOutput("artifact_plot", height = "500px")
+    } else if (inherits(artifacts$result_plot, "htmlwidget")) {
+      networkD3::forceNetworkOutput("artifact_plot_widget", height = "500px")
+    } else {
+      plotOutput("artifact_plot", height = "500px")
+    }
+  })
+
   output$artifact_plot <- renderPlot({
     if (is.null(artifacts$result_plot)) {
       return(ggplot() + geom_blank() + theme_void() +
              ggtitle("No plot result yet. Execute code that creates 'result_plot'."))
     }
+    if (inherits(artifacts$result_plot, "htmlwidget")) {
+      return(NULL)
+    }
     artifacts$result_plot
+  })
+
+  output$artifact_plot_widget <- networkD3::renderForceNetwork({
+    if (!is.null(artifacts$result_plot) && inherits(artifacts$result_plot, "htmlwidget")) {
+      artifacts$result_plot
+    } else {
+      NULL
+    }
   })
 
   # Artifact generated code output
