@@ -1,0 +1,49 @@
+# Dataset Description
+
+**Rows:** 100
+**Columns:** 5
+
+## Column Summary
+
+### id
+- Type: `numeric`
+- Missing: 0 (0%)
+
+**Statistics:**
+- Min: 1
+- Median: 50.5
+- Mean: 50.5
+- Max: 100
+
+### age
+- Type: `numeric`
+- Missing: 0 (0%)
+
+**Statistics:**
+- Min: 21
+- Median: 48
+- Mean: 47.68
+- Max: 80
+
+### salary
+- Type: `numeric`
+- Missing: 0 (0%)
+
+**Statistics:**
+- Min: 15302
+- Median: 51866
+- Mean: 50713
+- Max: 80521
+
+### department
+- Type: `categorical`
+- Missing: 0 (0%)
+
+**Top values:** Marketing, Sales, Engineering, HR
+
+### score
+- Type: `categorical`
+- Missing: 27 (27%)
+
+**Top values:** C, A, B
+

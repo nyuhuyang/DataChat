@@ -1,0 +1,30 @@
+]0;~[?2004hrstudio@c5ffba0c704f:~$ [Krstudio@c5ffba0c704f:~$ ls
+[?2004lapp.R
+]0;~[?2004hrstudio@c5ffba0c704f:~$ git init 
+[?2004l[33mhint: Using 'master' as the name for the initial branch. This default branch name[m
+[33mhint: is subject to change. To configure the initial branch name to use in all[m
+[33mhint: of your new repositories, which will suppress this warning, call:[m
+[33mhint: [m
+[33mhint: 	git config --global init.defaultBranch <name>[m
+[33mhint: [m
+[33mhint: Names commonly chosen instead of 'master' are 'main', 'trunk' and[m
+[33mhint: 'development'. The just-created branch can be renamed via this command:[m
+[33mhint: [m
+[33mhint: 	git branch -m <name>[m
+Initialized empty Git repository in /home/rstudio/.git/
+]0;~[?2004hrstudio@c5ffba0c704f:~$ b[Kgit branch
+[?2004lfatal: detected dubious ownership in repository at '/home/rstudio'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /home/rstudio
+]0;~[?2004hrstudio@c5ffba0c704f:~$ git [K[K[K[K[7mgit add -A[27mgit add -A
+[?2004lfatal: detected dubious ownership in repository at '/home/rstudio'
+To add an exception for this directory, call:
+
+	git config --global --add safe.directory /home/rstudio
+]0;~[?2004hrstudio@c5ffba0c704f:~$ [7mgit config --get user.name[27m[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[C[Cgit config --get user.name
+[?2004l]0;~[?2004hrstudio@c5ffba0c704f:~$ [Krstudio@c5ffba0c704f:~$ [Krstudio@c5ffba0c704f:~$ [Krstudio@c5ffba0c704f:~$ tree data
+[?2004lbash: tree: command not found
+]0;~[?2004hrstudio@c5ffba0c704f:~$ treee[K[K[K[K[Kls data
+[?2004ledges.csv  nodes.csv  subset_edges.csv	subset_node.csv
+]0;~[?2004hrstudio@c5ffba0c704f:~$ 
