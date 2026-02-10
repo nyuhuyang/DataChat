@@ -1,6 +1,6 @@
-# DataLabChat Quick Start Guide
+# DataChat Quick Start Guide
 
-Get up and running with DataLabChat in 5 minutes.
+Get up and running with DataChat in 5 minutes.
 
 ## Installation (2 minutes)
 

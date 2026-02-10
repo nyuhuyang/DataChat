@@ -1,4 +1,4 @@
-# DataLabChat: Conversational Data Analysis Interface
+# DataChat: Conversational Data Analysis Interface
 
 **Purpose:** Interactive R Shiny app for exploratory data analysis via chat interface. Combines NotebookLM-style conversation with R code generation (rule-based or LLM-powered), multi-source data management, and preset analysis templates.
 
@@ -158,7 +158,7 @@ sources_list <- get_selected_sources(data_sources(), selected_sources)
 ## File Organization
 
 ```
-DataLabChat/
+DataChat/
 ├── app.R                          # Main Shiny app (~1650 lines)
 ├── CLAUDE.md                      # This file
 ├── R/

@@ -2,7 +2,7 @@
 
 ## Overview
 
-A deterministic, no-LLM preset prompts system has been added to DataLabChat. Users can now select datasets, choose a preset analysis template, and execute local R scripts without any external API calls.
+A deterministic, no-LLM preset prompts system has been added to DataChat. Users can now select datasets, choose a preset analysis template, and execute local R scripts without any external API calls.
 
 ## Files Created/Modified
 

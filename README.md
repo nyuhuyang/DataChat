@@ -1,4 +1,4 @@
-# DataLabChat
+# DataChat
 
 **Conversational Data Analysis Interface** – An interactive R Shiny app for exploratory data analysis via natural language chat.
 
@@ -6,7 +6,7 @@
 
 ## Overview
 
-DataLabChat combines a chat interface with intelligent code generation to make data exploration accessible and interactive. Upload your data, ask questions in plain English, and get instant visualizations and insights—no coding required.
+DataChat combines a chat interface with intelligent code generation to make data exploration accessible and interactive. Upload your data, ask questions in plain English, and get instant visualizations and insights—no coding required.
 
 ### Key Features
 
@@ -82,7 +82,7 @@ Enable in sidebar with API credentials for natural language understanding:
 **Single-file design for simplicity:**
 
 ```
-DataLabChat/
+DataChat/
 ├── app.R                          # Main Shiny app (all logic in one file)
 ├── R/
 │   ├── presets.R                  # Preset system
