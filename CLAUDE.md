@@ -34,19 +34,22 @@ Click "Load Sample Data (mtcars)" button in sidebar to test without file upload.
 
 ## Architecture Invariants
 
-- **Single-file primary structure:** App logic lives in `app.R` (avoid splitting unless unavoidable)
-- **Helper isolation:** `R/presets.R` provides preset/template system only; no business logic
+- **Modular structure:** `app.R` is a thin orchestrator (~35 lines) that sources all modules
+- **UI modules:** `ui/` folder contains UI component functions (`ui_main.R`, `ui_sidebar.R`, `ui_chat.R`, `ui_artifacts.R`, `ui_styles.R`)
+- **Server modules:** `server/` folder contains server logic functions (`server_main.R`, `server_data_loading.R`, `server_chat.R`, `server_artifacts.R`, `server_history.R`)
+- **Helper utilities:** `R/` folder contains pure utility functions (`utils_schema.R`, `utils_file_io.R`, `utils_code_gen.R`, `utils_data_sources.R`, `utils_execution.R`)
+- **Preset system:** `R/presets.R` provides preset/template system only; no business logic
 - **Template scripts:** `R/templates/*.R` are pure analysis code, loaded dynamically at runtime
 - **Safe execution:** User code runs in isolated environment (`new.env(parent = emptyenv())`)
 - **Multi-source design:** App binds data as `df_nodes`, `df_edges`, `df_metadata` (all sources available)
 - **Backward compatibility:** Single source still binds as `df` for legacy code
 - **Stateless templates:** Template scripts must be self-contained; they cannot rely on persistent state
+- **Source order matters:** `R/presets.R` and `R/utils_schema.R` must be sourced before files that depend on them
 
 ---
 
 ## Guardrails (Do NOT)
 
-- ❌ Do NOT split `app.R` into modules/subfiles unless you have explicit permission
 - ❌ Do NOT refactor the preset/template system—treat `R/presets.R` as a stable interface
 - ❌ Do NOT add new required dependencies without justification (app must run with base + listed packages)
 - ❌ Do NOT create new helper files in `R/` without describing them in CLAUDE.md
@@ -159,15 +162,33 @@ sources_list <- get_selected_sources(data_sources(), selected_sources)
 
 ```
 DataChat/
-├── app.R                          # Main Shiny app (~1650 lines)
+├── app.R                          # Thin orchestrator (~35 lines)
 ├── CLAUDE.md                      # This file
+├── ui/
+│   ├── ui_main.R                  # Top-level UI assembly (build_ui)
+│   ├── ui_sidebar.R               # Sidebar: file upload, file list
+│   ├── ui_chat.R                  # Chat panel: display area, input, send button
+│   ├── ui_artifacts.R             # Right panel: tabs (Table, Plot, Code, Logs, History)
+│   └── ui_styles.R                # CSS + JavaScript (command menu)
+├── server/
+│   ├── server_main.R              # Server entry point (build_server) + reactive values
+│   ├── server_data_loading.R      # File upload, file list, checkbox handlers
+│   ├── server_chat.R              # Chat display + send message handler
+│   ├── server_artifacts.R         # Table/plot/code/logs renderers
+│   └── server_history.R           # Run history list + view buttons
 ├── R/
 │   ├── presets.R                  # Preset metadata + loading functions
+│   ├── utils_schema.R             # generate_schema_text()
+│   ├── utils_file_io.R            # read_any, detect_file_params, preview_and_summarize
+│   ├── utils_code_gen.R           # generate_r_code, llm_generate_r_code, generate_code_with_mode
+│   ├── utils_data_sources.R       # infer_source_type, generate_source_id, add_data_source, get_selected_sources
+│   ├── utils_execution.R          # execute_user_code
 │   └── templates/
 │       ├── node_type_distribution.R
 │       ├── edge_type_count.R
 │       ├── node_edge_join_summary.R
-│       └── schema_check.R
+│       ├── schema_check.R
+│       └── force_network.R
 ├── QUICKSTART.md                  # Quick reference (user-facing)
 ├── PRESETS.md                     # Preset system documentation
 ├── PRESET_TEMPLATE_GUIDE.md       # Developer guide for templates
