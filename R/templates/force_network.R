@@ -30,6 +30,23 @@ find_node_id <- function(df) {
   NULL
 }
 
+pick_node_key_col <- function(nodes_df, edges_df, edge_src_col, edge_tgt_col, id_col, label_col) {
+  edge_values <- unique(c(as.character(edges_df[[edge_src_col]]), as.character(edges_df[[edge_tgt_col]])))
+
+  id_hits <- sum(edge_values %in% as.character(nodes_df[[id_col]]))
+  label_hits <- if (!is.na(label_col)) {
+    sum(edge_values %in% as.character(nodes_df[[label_col]]))
+  } else {
+    -1L
+  }
+
+  if (label_hits > id_hits) {
+    return(label_col)
+  }
+
+  id_col
+}
+
 for (nm in names(datasets)) {
   df <- datasets[[nm]]
   nm_lower <- tolower(nm)
@@ -73,9 +90,10 @@ if (is.null(edges_df)) {
   if (is.na(name_col)) name_col <- node_id_col
   node_type_col <- find_col(nodes_df, c("node_type"))
   edge_type_col <- find_col(edges_df, c("edge_type"))
+  node_key_col <- pick_node_key_col(nodes_df, edges_df, edge_src_col, edge_tgt_col, node_id_col, name_col)
 
-  logs <- c(logs, sprintf("[force_network] node_id=%s name=%s node_type=%s edge_type=%s",
-    node_id_col, name_col,
+  logs <- c(logs, sprintf("[force_network] node_id=%s name=%s node_key=%s node_type=%s edge_type=%s",
+    node_id_col, name_col, node_key_col,
     ifelse(is.na(node_type_col), "N/A", node_type_col),
     ifelse(is.na(edge_type_col), "N/A", edge_type_col)))
 
@@ -97,15 +115,25 @@ if (is.null(edges_df)) {
     logs <- c(logs, sprintf("[force_network] After edge_type filter: %d edges", nrow(edges_work)))
   }
 
-  keep_ids <- as.character(nodes_work[[node_id_col]])
+  keep_keys <- as.character(nodes_work[[node_key_col]])
   if (!is.null(params$node_symbol)) {
-    edges_work <- edges_work[edges_work[[edge_src_col]] %in% keep_ids | edges_work[[edge_tgt_col]] %in% keep_ids, , drop = FALSE]
+    edges_work <- edges_work[
+      as.character(edges_work[[edge_src_col]]) %in% keep_keys |
+      as.character(edges_work[[edge_tgt_col]]) %in% keep_keys,
+      ,
+      drop = FALSE
+    ]
     if (nrow(edges_work) > 0) {
-      neighbor_ids <- unique(c(as.character(edges_work[[edge_src_col]]), as.character(edges_work[[edge_tgt_col]])))
-      nodes_work <- nodes_df[nodes_df[[node_id_col]] %in% neighbor_ids, , drop = FALSE]
+      neighbor_keys <- unique(c(as.character(edges_work[[edge_src_col]]), as.character(edges_work[[edge_tgt_col]])))
+      nodes_work <- nodes_df[as.character(nodes_df[[node_key_col]]) %in% neighbor_keys, , drop = FALSE]
     }
   } else {
-    edges_work <- edges_work[edges_work[[edge_src_col]] %in% keep_ids & edges_work[[edge_tgt_col]] %in% keep_ids, , drop = FALSE]
+    edges_work <- edges_work[
+      as.character(edges_work[[edge_src_col]]) %in% keep_keys &
+      as.character(edges_work[[edge_tgt_col]]) %in% keep_keys,
+      ,
+      drop = FALSE
+    ]
   }
 
   # Apply edge limit (user-specified or default 500)
@@ -117,6 +145,12 @@ if (is.null(edges_df)) {
   if (!is.na(max_edges) && nrow(edges_work) > max_edges) {
     logs <- c(logs, sprintf("[force_network] Capping edges from %d to %d (use max_edges= to change)", nrow(edges_work), max_edges))
     edges_work <- utils::head(edges_work, max_edges)
+  }
+
+  if (nrow(edges_work) > 0) {
+    edge_keys <- unique(c(as.character(edges_work[[edge_src_col]]), as.character(edges_work[[edge_tgt_col]])))
+    nodes_work <- nodes_work[as.character(nodes_work[[node_key_col]]) %in% edge_keys, , drop = FALSE]
+    logs <- c(logs, sprintf("[force_network] Nodes kept after edge alignment: %d", nrow(nodes_work)))
   }
 
   # Apply node limit (user-specified or default 200)
@@ -140,18 +174,28 @@ if (is.null(edges_df)) {
       stringsAsFactors = FALSE
     )
 
-    src_idx <- match(edges_work[[edge_src_col]], nodes_work[[node_id_col]]) - 1
-    tgt_idx <- match(edges_work[[edge_tgt_col]], nodes_work[[node_id_col]]) - 1
+    src_idx <- match(as.character(edges_work[[edge_src_col]]), as.character(nodes_work[[node_key_col]])) - 1
+    tgt_idx <- match(as.character(edges_work[[edge_tgt_col]]), as.character(nodes_work[[node_key_col]])) - 1
     valid <- !is.na(src_idx) & !is.na(tgt_idx) & src_idx >= 0 & tgt_idx >= 0
-    links <- data.frame(source = src_idx[valid], target = tgt_idx[valid], value = 1)
+    links <- data.frame(
+      source = src_idx[valid],
+      target = tgt_idx[valid],
+      value = rep(1, sum(valid)),
+      stringsAsFactors = FALSE
+    )
 
     if (nrow(links) == 0) {
       result_table <- data.frame(Message = "No valid links after matching nodes to edges. Check node IDs.")
       logs <- c(logs, "[force_network] No valid links after matching IDs")
     } else {
+      filters_text <- if (length(params) > 0) {
+        paste(names(params), unlist(params), sep = "=", collapse = "; ")
+      } else {
+        ""
+      }
       result_table <- data.frame(
         Metric = c("nodes", "edges", "filters"),
-        Value = c(nrow(nodes), nrow(links), paste(names(params), unlist(params), sep = "=", collapse = "; ")),
+        Value = c(nrow(nodes), nrow(links), filters_text),
         stringsAsFactors = FALSE
       )
       result_plot <- forceNetwork(

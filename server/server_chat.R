@@ -6,6 +6,7 @@ server_chat <- function(input, output, session,
                          messages, artifacts, data_sources,
                          selected_sources, run_history,
                          active_dataset, active_dataset_metadata) {
+  last_llm_selection_signature <- reactiveVal(NULL)
 
   # Chat display
   output$chat_display <- renderUI({
@@ -81,7 +82,8 @@ server_chat <- function(input, output, session,
       selected_names <- basename(selected_files)
       selected_ids <- vapply(data_sources$source_order, function(id) {
         src <- data_sources$sources[[id]]
-        if (!is.null(src) && src$name %in% selected_names) id else NA_character_
+        source_file_name <- src$file_name %||% src$name
+        if (!is.null(src) && source_file_name %in% selected_names) id else NA_character_
       }, character(1))
       selected_ids <- selected_ids[!is.na(selected_ids)]
     }
@@ -151,33 +153,152 @@ server_chat <- function(input, output, session,
       )
 
       if (use_llm) {
-        # ----- LLM chat mode: send conversation history to API -----
-        progress <- Progress$new(session, min = 0, max = 2)
-        on.exit(progress$close())
-        progress$set(message = "Sending to LLM...", value = 1)
+        dataset_context <- build_selected_profile_context(selected_ids, data_sources)
+        if (length(selected_ids) == 0) {
+          # ----- LLM chat fallback: no datasets selected -----
+          progress <- Progress$new(session, min = 0, max = 2)
+          on.exit(progress$close())
+          progress$set(message = "Sending to LLM...", value = 1)
+          selection_signature <- paste(sort(selected_ids), collapse = "|")
+          previous_signature <- last_llm_selection_signature()
 
-        # Build conversation history from messages (user + assistant only)
-        chat_history <- Filter(
-          function(msg) msg$role %in% c("user", "assistant"),
-          messages$list
-        )
+          chat_history <- Filter(
+            function(msg) msg$role %in% c("user", "assistant"),
+            messages$list
+          )
 
-        reply <- llm_chat(
-          conversation_history = chat_history,
-          base_url = provider_parts[1],
-          api_key = Sys.getenv("DATACHAT_API_KEY", ""),
-          model = provider_parts[2]
-        )
+          if (!identical(previous_signature, selection_signature)) {
+            latest_user_turn <- tail(Filter(function(msg) msg$role == "user", messages$list), 1)
+            chat_history <- c(
+              list(list(
+                role = "user",
+                content = paste0(
+                  "Use only the currently selected datasets for this reply.\n\n",
+                  dataset_context
+                )
+              )),
+              latest_user_turn
+            )
+          } else {
+            chat_history <- c(
+              list(list(
+                role = "user",
+                content = paste0(
+                  "Current selected datasets for this reply:\n\n",
+                  dataset_context
+                )
+              )),
+              chat_history
+            )
+          }
 
-        progress$set(message = "Done", value = 2)
+          reply <- llm_chat(
+            conversation_history = chat_history,
+            base_url = provider_parts[1],
+            api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+            model = provider_parts[2],
+            dataset_context = dataset_context
+          )
+          last_llm_selection_signature(selection_signature)
 
-        messages$list[[length(messages$list) + 1]] <- list(
-          role = "assistant",
-          content = reply,
-          timestamp = Sys.time()
-        )
+          progress$set(message = "Done", value = 2)
 
-        updateTextAreaInput(session, "user_input", value = "")
+          messages$list[[length(messages$list) + 1]] <- list(
+            role = "assistant",
+            content = reply,
+            timestamp = Sys.time()
+          )
+
+          updateTextAreaInput(session, "user_input", value = "")
+        } else {
+          # ----- LLM data analysis mode: generate code, execute, summarize -----
+          progress <- Progress$new(session, min = 0, max = 4)
+          on.exit(progress$close())
+
+          progress$set(message = "Building context", value = 1)
+
+          sources_list <- list()
+          for (sid in selected_ids) {
+            src <- data_sources$sources[[sid]]
+            if (is.null(src)) next
+            if (src$type == "nodes") sources_list$nodes <- src
+            if (src$type == "edges") sources_list$edges <- src
+            if (src$type == "metadata") sources_list$metadata <- src
+          }
+
+          progress$set(message = "Generating code", value = 2)
+          generated_code <- llm_generate_r_code(
+            user_query = user_msg,
+            schema_text = dataset_context,
+            base_url = provider_parts[1],
+            api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+            model = provider_parts[2]
+          )
+          artifacts$generated_code <- generated_code
+
+          progress$set(message = "Executing code", value = 3)
+          exec_result <- execute_user_code(generated_code, sources_list = sources_list)
+
+          artifacts$result_table <- exec_result$result_table
+          artifacts$result_plot <- exec_result$result_plot
+          artifacts$hide_colnames <- FALSE
+
+          progress$set(message = "Finalizing answer", value = 4)
+          reply <- llm_finalize_analysis_answer(
+            user_query = user_msg,
+            dataset_context = dataset_context,
+            generated_code = generated_code,
+            exec_result = exec_result,
+            base_url = provider_parts[1],
+            api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+            model = provider_parts[2]
+          )
+
+          run_id <- paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+          run_record <- list(
+            run_id = run_id,
+            timestamp = Sys.time(),
+            user_query = user_msg,
+            generated_code = generated_code,
+            mode = "LLM",
+            sources_used = list(
+              nodes = selected_sources$nodes_id,
+              edges = selected_sources$edges_id,
+              metadata = selected_sources$metadata_id
+            ),
+            execution_status = if (exec_result$success) "success" else "failure",
+            error_message = if (!exec_result$success) exec_result$output else NULL,
+            artifacts = list(
+              table_artifact = list(
+                exists = !is.null(exec_result$result_table),
+                full = exec_result$result_table
+              ),
+              plot_artifact = list(
+                exists = !is.null(exec_result$result_plot),
+                plot_object = exec_result$result_plot
+              )
+            )
+          )
+          run_history$runs[[length(run_history$runs) + 1]] <- run_record
+
+          artifacts$logs <- paste(
+            artifacts$logs,
+            paste0("[", format(Sys.time(), "%H:%M:%S"), "] User: ", user_msg),
+            paste0("[", format(Sys.time(), "%H:%M:%S"), "] LLM generated code"),
+            paste0("Code:\n", generated_code),
+            paste0("[", format(Sys.time(), "%H:%M:%S"), "] Code executed"),
+            paste0("Output:\n", exec_result$output),
+            sep = "\n"
+          )
+
+          messages$list[[length(messages$list) + 1]] <- list(
+            role = "assistant",
+            content = reply,
+            timestamp = Sys.time()
+          )
+
+          updateTextAreaInput(session, "user_input", value = "")
+        }
 
       } else {
         # ----- Rule-based code gen mode -----
@@ -201,20 +322,8 @@ server_chat <- function(input, output, session,
           if (src$type == "metadata") sources_list$metadata <- src
         }
 
-        # Generate schema text for LLM context
-        schema_text <- if (length(selected_ids) > 0) {
-          schema_parts <- c()
-          for (source_id in selected_ids) {
-            source <- data_sources$sources[[source_id]]
-            schema_parts <- c(schema_parts, paste0(
-              "[", toupper(source$type), "] ", source$name, " (", source$row_count, "x", source$col_count, ")\n",
-              source$schema_text
-            ))
-          }
-          paste(schema_parts, collapse = "\n\n")
-        } else {
-          "No selected datasets."
-        }
+        # Generate profile-aware context for code generation
+        schema_text <- build_selected_profile_context(selected_ids, data_sources)
 
         progress$set(message = "Generating code", value = 2)
 
@@ -378,48 +487,46 @@ server_chat <- function(input, output, session,
       # Store in history
       run_history$runs[[length(run_history$runs) + 1]] <- run_record
 
-      # Add assistant message — include hints for graph presets
-      graph_preset_ids <- c("graph_explore", "force_network")
-      assistant_response <- if (preset_id %in% graph_preset_ids && length(preset_params) == 0) {
-        param_summary <- paste0(
-          "Available filters:\n",
-          "  node_type=<type>      Filter by node type\n",
-          "  edge_type=<type>      Filter by edge type\n",
-          "  node_symbol=<name>    Filter by node name/symbol\n",
-          "  max_nodes=<n>         Limit nodes (default: 200)\n",
-          "  max_edges=<n>         Limit edges (default: 500)\n"
-        )
-        paste0(
-          "\u26a0\ufe0f No filters provided. Graph is capped at 200 nodes / 500 edges to avoid slowness.\n\n",
-          param_summary, "\n",
-          "Examples:\n",
-          "  /", preset_id, " caffeine\n",
-          '  /', preset_id, ' "bone marrow"\n',
-          "  /", preset_id, " node_type=Compound max_edges=300\n",
-          "  /", preset_id, " node_type=Anatomy max_nodes=100\n\n",
-          'Tip: Pass a node name directly (e.g. /', preset_id, ' caffeine) to explore its neighborhood.\n',
-          'Use quotes for names with spaces (e.g. /', preset_id, ' "bone marrow").\n\n',
-          "See Table and Plot tabs for results."
-        )
-      } else if (preset_id %in% graph_preset_ids) {
-        filters_used <- paste(names(preset_params), unlist(preset_params), sep = "=", collapse = ", ")
-        paste0(
-          "\u2705 Preset executed: ", preset_label, "\n",
-          "Filters: ", filters_used, "\n\n",
-          "See Table and Plot tabs for results.\n",
-          "Tip: Add max_nodes= or max_edges= to limit graph size if slow."
-        )
-      } else {
-        paste0(
-          "\u2705 Preset executed: ", preset_label, "\n\n",
-          "See tabs for results (Table, Plot, Logs, Generated R Code)"
+      # Presets run locally; show graph usage hints as a system note and
+      # otherwise surface results directly instead of adding an assistant reply.
+      if (preset_id %in% c("graph_explore", "force_network")) {
+        help_text <- if (length(preset_params) == 0) {
+          paste0(
+            "Graph preset executed locally.\n\n",
+            "Available filters:\n",
+            "  node_type=<type>\n",
+            "  edge_type=<type>\n",
+            "  node_symbol=<name>\n",
+            "  max_nodes=<n>\n",
+            "  max_edges=<n>\n\n",
+            "Examples:\n",
+            "  /", preset_id, " caffeine\n",
+            "  /", preset_id, " \"bone marrow\"\n",
+            "  /", preset_id, " node_type=Compound max_edges=300\n",
+            "  /", preset_id, " node_type=Anatomy max_nodes=100"
+          )
+        } else {
+          paste0(
+            "Graph preset executed locally.\n",
+            "Filters: ",
+            paste(names(preset_params), unlist(preset_params), sep = "=", collapse = ", ")
+          )
+        }
+
+        messages$list[[length(messages$list) + 1]] <- list(
+          role = "system",
+          content = help_text,
+          timestamp = Sys.time()
         )
       }
-      messages$list[[length(messages$list) + 1]] <- list(
-        role = "assistant",
-        content = assistant_response,
-        timestamp = Sys.time()
-      )
+
+      if (!is.null(template_result$result_plot)) {
+        shinyjs::runjs("document.querySelector('[data-value=\"Plot\"]').click()")
+      } else if (!is.null(template_result$result_table)) {
+        shinyjs::runjs("document.querySelector('[data-value=\"Table\"]').click()")
+      } else {
+        shinyjs::runjs("document.querySelector('[data-value=\"Logs\"]').click()")
+      }
 
       # Reset preset selector
       updateTextAreaInput(session, "user_input", value = "")

@@ -4,15 +4,22 @@
 
 # Infer data source type from column names and structure
 infer_source_type <- function(data) {
-  cols <- tolower(names(data))
+  cols <- names(data)
+  cols <- cols[!is.na(cols) & nzchar(cols)]
+  cols <- tolower(cols)
 
   # Check for edge indicators (from-to relationships)
-  if (("from" %in% cols || "source" %in% cols) && ("to" %in% cols || "target" %in% cols)) {
+  has_edge_start <- any(cols %in% c("from", "source", "node_from", "src", "source_id", "from_id"))
+  has_edge_end <- any(cols %in% c("to", "target", "node_to", "tgt", "target_id", "to_id"))
+  if (has_edge_start && has_edge_end) {
     return("edges")
   }
 
   # Check for node indicators (IDs with names/labels)
-  if ("id" %in% cols && ("name" %in% cols || "label" %in% cols)) {
+  has_node_id <- any(cols %in% c("id", "node_id", "nodeid"))
+  has_node_label <- any(cols %in% c("name", "label", "node_symbol", "symbol"))
+  has_node_type <- any(cols %in% c("node_type", "type"))
+  if (has_node_id && (has_node_label || has_node_type)) {
     return("nodes")
   }
 
@@ -27,15 +34,24 @@ generate_source_id <- function(filename, timestamp = Sys.time()) {
 }
 
 # Add a new data source to the pool
-add_data_source <- function(data, filename, source_type, data_sources) {
+add_data_source <- function(data, filename, source_type, data_sources, preview_summary = NULL,
+                            file_path = NULL, source_file_name = NULL, sheet_name = NULL,
+                            profile_info = NULL) {
   source_id <- generate_source_id(filename)
+  schema_text <- generate_schema_text(data)
 
   source_obj <- list(
     id = source_id,
     name = filename,
+    file_name = source_file_name %||% filename,
+    sheet_name = sheet_name,
     type = source_type,
     data = data,
-    schema_text = generate_schema_text(data),
+    schema_text = schema_text,
+    profile_text = profile_info$profile_text %||% schema_text,
+    profile_md_path = profile_info$profile_md_path %||% NA_character_,
+    profile_rds_path = profile_info$profile_rds_path %||% NA_character_,
+    profile_cache_hit = isTRUE(profile_info$profile_cache_hit),
     row_count = nrow(data),
     col_count = ncol(data),
     upload_time = Sys.time()

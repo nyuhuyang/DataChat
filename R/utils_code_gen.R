@@ -4,12 +4,20 @@
 
 # LLM chat with conversation history
 # conversation_history: list of list(role, content) pairs
-llm_chat <- function(conversation_history, base_url, api_key, model) {
+llm_chat <- function(conversation_history, base_url, api_key, model, dataset_context = NULL) {
   if (is.null(base_url) || base_url == "" || is.null(api_key) || api_key == "") {
     return("Error: API not configured. Set DATACHAT_API_KEY in .env and select a provider.")
   }
 
   is_anthropic <- grepl("anthropic", base_url, ignore.case = TRUE)
+  system_prompt <- paste0(
+    "You are a helpful data analysis assistant. You help users explore and understand their data.\n\n",
+    "If dataset context is provided below, treat it as the current loaded data state for this session. ",
+    "Use it directly when answering questions about what data is loaded, dataset sizes, columns, or likely joins. ",
+    "Do not claim the data is unavailable when the context describes loaded datasets.\n\n",
+    "Current dataset context:\n",
+    dataset_context %||% "No datasets are currently selected."
+  )
 
   # Convert history to API message format (only user/assistant roles)
   api_messages <- lapply(conversation_history, function(msg) {
@@ -22,7 +30,7 @@ llm_chat <- function(conversation_history, base_url, api_key, model) {
       body <- list(
         model = model,
         max_tokens = 1024,
-        system = "You are a helpful data analysis assistant. You help users explore and understand their data.",
+        system = system_prompt,
         messages = api_messages
       )
       response <- httr2::request(endpoint) %>%
@@ -47,7 +55,7 @@ llm_chat <- function(conversation_history, base_url, api_key, model) {
       endpoint <- paste0(base_url, "/chat/completions")
       # OpenAI format: prepend system message
       openai_messages <- c(
-        list(list(role = "system", content = "You are a helpful data analysis assistant. You help users explore and understand their data.")),
+        list(list(role = "system", content = system_prompt)),
         api_messages
       )
       body <- list(
@@ -110,11 +118,14 @@ llm_generate_r_code <- function(user_query, schema_text, base_url, api_key, mode
     "You are an expert R data analyst. ",
     "Generate ONLY executable R code without any markdown formatting, explanations, or backticks.\n\n",
     "Rules:\n",
-    "- The dataset is available as 'df'\n",
+    "- If one dataset is selected, it may be available as 'df'\n",
+    "- Multi-source datasets are available as 'df_nodes', 'df_edges', and 'df_metadata' when present\n",
     "- Libraries dplyr, ggplot2, and tibble are already loaded\n",
+    "- Prefer base R helpers like grepl() for string matching, or use explicit namespaces such as stringr::str_detect()\n",
     "- Store data frame results in 'result_table'\n",
     "- Store ggplot objects in 'result_plot'\n",
     "- Use print() for text output\n",
+    "- Prefer 'df_nodes' and 'df_edges' for graph questions when both are available\n",
     "- Output ONLY the R code, no explanations\n\n",
     "Data Schema:\n", schema_text
   )
@@ -235,4 +246,71 @@ generate_code_with_mode <- function(user_query, schema_text, use_llm, base_url =
     # Use rule-based
     return(generate_r_code(user_query, schema_text))
   }
+}
+
+build_execution_summary_text <- function(exec_result, max_rows = 10, max_cols = 8) {
+  summary_parts <- c()
+
+  summary_parts <- c(summary_parts, paste0("Execution success: ", exec_result$success))
+
+  output_text <- trimws(exec_result$output %||% "")
+  if (nzchar(output_text)) {
+    summary_parts <- c(summary_parts, "Console output:", output_text)
+  }
+
+  if (!is.null(exec_result$result_table)) {
+    table_df <- as.data.frame(exec_result$result_table)
+    preview_df <- utils::head(table_df, max_rows)
+    if (ncol(preview_df) > max_cols) {
+      preview_df <- preview_df[, seq_len(max_cols), drop = FALSE]
+    }
+
+    summary_parts <- c(
+      summary_parts,
+      sprintf("Result table: %d rows x %d columns", nrow(table_df), ncol(table_df)),
+      paste(capture.output(print(preview_df, row.names = FALSE)), collapse = "\n")
+    )
+  } else {
+    summary_parts <- c(summary_parts, "Result table: none")
+  }
+
+  if (!is.null(exec_result$result_plot)) {
+    plot_class <- paste(class(exec_result$result_plot), collapse = ", ")
+    summary_parts <- c(summary_parts, paste0("Result plot class: ", plot_class))
+  } else {
+    summary_parts <- c(summary_parts, "Result plot: none")
+  }
+
+  paste(summary_parts, collapse = "\n\n")
+}
+
+llm_finalize_analysis_answer <- function(user_query, dataset_context, generated_code,
+                                         exec_result, base_url, api_key, model) {
+  execution_summary <- build_execution_summary_text(exec_result)
+
+  conversation_history <- list(
+    list(
+      role = "user",
+      content = paste0(
+        "Answer the user's question using the executed analysis results.\n\n",
+        "User question:\n", user_query, "\n\n",
+        "Generated R code:\n", generated_code, "\n\n",
+        "Execution summary:\n", execution_summary, "\n\n",
+        "Requirements:\n",
+        "- Answer the question directly.\n",
+        "- If the table contains the answer, summarize it in plain English.\n",
+        "- Mention counts and names when available.\n",
+        "- If execution failed or results are insufficient, say that clearly.\n",
+        "- Do not output markdown code fences."
+      )
+    )
+  )
+
+  llm_chat(
+    conversation_history = conversation_history,
+    base_url = base_url,
+    api_key = api_key,
+    model = model,
+    dataset_context = dataset_context
+  )
 }

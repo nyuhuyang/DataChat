@@ -4,7 +4,7 @@
 
 execute_user_code <- function(code, data = NULL, sources_list = NULL) {
   # Create isolated execution environment
-  exec_env <- new.env(parent = emptyenv())
+  exec_env <- new.env(parent = .BaseNamespaceEnv)
 
   # Handle backward compatibility: if sources_list provided, use it; otherwise use single data
   if (!is.null(sources_list) && length(sources_list) > 0) {
@@ -33,6 +33,10 @@ execute_user_code <- function(code, data = NULL, sources_list = NULL) {
     eval(quote(library(dplyr, warn.conflicts = FALSE)), envir = exec_env)
     eval(quote(library(ggplot2)), envir = exec_env)
     eval(quote(library(tibble)), envir = exec_env)
+    eval(quote(library(networkD3)), envir = exec_env)
+    if (requireNamespace("stringr", quietly = TRUE)) {
+      eval(quote(library(stringr)), envir = exec_env)
+    }
   }, error = function(e) {
     cat("Warning: Error loading packages:", e$message, "\n")
   })

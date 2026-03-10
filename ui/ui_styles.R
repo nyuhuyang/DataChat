@@ -24,6 +24,49 @@ ui_head_tags <- function() {
       .cmd-item:hover {
         background: #f2f2f2;
       }
+      .chat-card {
+        height: calc(100vh - 110px);
+        min-height: 700px;
+      }
+      .chat-card > .card-body {
+        height: 100%;
+      }
+      .chat-card-body {
+        display: flex;
+        flex-direction: column;
+        height: 100%;
+        min-height: 0;
+      }
+      .chat-scroll-container {
+        flex: 1 1 auto;
+        min-height: 0;
+        border: 1px solid #dee2e6;
+        border-radius: 6px;
+        padding: 15px;
+        overflow-y: auto;
+        background-color: #f8f9fa;
+        margin-bottom: 15px;
+      }
+      .chat-composer {
+        flex: 0 0 auto;
+        margin-top: auto;
+      }
+      .chat-composer .form-group {
+        margin-bottom: 10px;
+      }
+      @media (max-width: 991.98px) {
+        .chat-card {
+          height: auto;
+          min-height: 0;
+        }
+        .chat-card > .card-body,
+        .chat-card-body {
+          height: auto;
+        }
+        .chat-scroll-container {
+          min-height: 320px;
+        }
+      }
     ")),
     tags$script(HTML(paste0("
       const PRESETS = [",
