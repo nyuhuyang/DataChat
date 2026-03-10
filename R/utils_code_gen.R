@@ -2,6 +2,81 @@
 # Code generation: rule-based, LLM, and router
 # ============================================================================
 
+# LLM chat with conversation history
+# conversation_history: list of list(role, content) pairs
+llm_chat <- function(conversation_history, base_url, api_key, model) {
+  if (is.null(base_url) || base_url == "" || is.null(api_key) || api_key == "") {
+    return("Error: API not configured. Set DATACHAT_API_KEY in .env and select a provider.")
+  }
+
+  is_anthropic <- grepl("anthropic", base_url, ignore.case = TRUE)
+
+  # Convert history to API message format (only user/assistant roles)
+  api_messages <- lapply(conversation_history, function(msg) {
+    list(role = msg$role, content = msg$content)
+  })
+
+  tryCatch({
+    if (is_anthropic) {
+      endpoint <- paste0(base_url, "/messages")
+      body <- list(
+        model = model,
+        max_tokens = 1024,
+        system = "You are a helpful data analysis assistant. You help users explore and understand their data.",
+        messages = api_messages
+      )
+      response <- httr2::request(endpoint) %>%
+        httr2::req_headers(
+          "content-type" = "application/json",
+          "x-api-key" = api_key,
+          "anthropic-version" = "2023-06-01"
+        ) %>%
+        httr2::req_body_json(body) %>%
+        httr2::req_timeout(60) %>%
+        httr2::req_error(is_error = function(resp) FALSE) %>%
+        httr2::req_perform()
+
+      status <- httr2::resp_status(response)
+      result <- httr2::resp_body_json(response, simplifyVector = FALSE)
+      if (status != 200) {
+        return(paste("API Error:", result$error$message %||% paste("HTTP", status)))
+      }
+      result$content[[1]]$text
+
+    } else {
+      endpoint <- paste0(base_url, "/chat/completions")
+      # OpenAI format: prepend system message
+      openai_messages <- c(
+        list(list(role = "system", content = "You are a helpful data analysis assistant. You help users explore and understand their data.")),
+        api_messages
+      )
+      body <- list(
+        model = model,
+        messages = openai_messages,
+        max_tokens = 1024
+      )
+      response <- httr2::request(endpoint) %>%
+        httr2::req_headers(
+          "Content-Type" = "application/json",
+          "Authorization" = paste("Bearer", api_key)
+        ) %>%
+        httr2::req_body_json(body) %>%
+        httr2::req_timeout(60) %>%
+        httr2::req_error(is_error = function(resp) FALSE) %>%
+        httr2::req_perform()
+
+      status <- httr2::resp_status(response)
+      result <- httr2::resp_body_json(response, simplifyVector = FALSE)
+      if (status != 200) {
+        return(paste("API Error:", result$error$message %||% paste("HTTP", status)))
+      }
+      result$choices[[1]]$message$content
+    }
+  }, error = function(e) {
+    paste("Error:", e$message)
+  })
+}
+
 # Rule-based code generation function
 generate_r_code <- function(user_query, schema_text) {
   query_lower <- tolower(user_query)
@@ -21,15 +96,14 @@ generate_r_code <- function(user_query, schema_text) {
   }
 }
 
-# LLM-based code generation function
-llm_generate_r_code <- function(user_query, schema_text, base_url, api_key) {
+# LLM-based code generation function (supports Anthropic and OpenAI-compatible APIs)
+llm_generate_r_code <- function(user_query, schema_text, base_url, api_key, model = "claude-sonnet-4-20250514") {
   # Validate inputs
   if (is.null(base_url) || base_url == "" || is.null(api_key) || api_key == "") {
     stop("API Base URL and API Key are required for LLM mode")
   }
 
-  # Build endpoint URL
-  endpoint <- paste0(base_url, "/chat/completions")
+  is_anthropic <- grepl("anthropic", base_url, ignore.case = TRUE)
 
   # System prompt with strict instructions
   system_prompt <- paste0(
@@ -45,63 +119,95 @@ llm_generate_r_code <- function(user_query, schema_text, base_url, api_key) {
     "Data Schema:\n", schema_text
   )
 
-  # User message
   user_message <- paste0("Generate R code for: ", user_query)
 
-  # Request body
-  request_body <- list(
-    model = "gpt-4",
-    messages = list(
-      list(role = "system", content = system_prompt),
-      list(role = "user", content = user_message)
-    ),
-    temperature = 0.3,
-    max_tokens = 1000
-  )
-
-  # API call with error handling
   tryCatch({
-    response <- httr2::request(endpoint) %>%
-      httr2::req_headers(
-        "Content-Type" = "application/json",
-        "Authorization" = paste("Bearer", api_key)
-      ) %>%
-      httr2::req_body_json(request_body) %>%
-      httr2::req_timeout(30) %>%
-      httr2::req_retry(max_tries = 2) %>%
-      httr2::req_error(is_error = function(resp) FALSE) %>%
-      httr2::req_perform()
+    if (is_anthropic) {
+      # Anthropic Messages API
+      endpoint <- paste0(base_url, "/messages")
+      request_body <- list(
+        model = model,
+        max_tokens = 1024,
+        system = system_prompt,
+        messages = list(
+          list(role = "user", content = user_message)
+        )
+      )
 
-    # Check status
-    status <- httr2::resp_status(response)
-    if (status != 200) {
-      error_body <- httr2::resp_body_json(response, simplifyVector = FALSE)
-      error_msg <- if (!is.null(error_body$error$message)) {
-        error_body$error$message
-      } else {
-        paste("HTTP", status, "error")
+      response <- httr2::request(endpoint) %>%
+        httr2::req_headers(
+          "content-type" = "application/json",
+          "x-api-key" = api_key,
+          "anthropic-version" = "2023-06-01"
+        ) %>%
+        httr2::req_body_json(request_body) %>%
+        httr2::req_timeout(60) %>%
+        httr2::req_retry(max_tries = 2) %>%
+        httr2::req_error(is_error = function(resp) FALSE) %>%
+        httr2::req_perform()
+
+      status <- httr2::resp_status(response)
+      result <- httr2::resp_body_json(response, simplifyVector = FALSE)
+
+      if (status != 200) {
+        error_msg <- if (!is.null(result$error$message)) result$error$message else paste("HTTP", status)
+        stop(paste("Anthropic API Error:", error_msg))
       }
-      stop(paste("API Error:", error_msg))
-    }
 
-    # Parse response
-    result <- httr2::resp_body_json(response, simplifyVector = FALSE)
+      # Anthropic returns content as a list of blocks
+      if (!is.null(result$content) && length(result$content) > 0) {
+        generated_code <- result$content[[1]]$text
+      } else {
+        stop("No content in Anthropic response")
+      }
 
-    if (!is.null(result$choices) && length(result$choices) > 0) {
-      generated_code <- result$choices[[1]]$message$content
-
-      # Clean up markdown artifacts
-      generated_code <- gsub("```r\\n?", "", generated_code)
-      generated_code <- gsub("```\\n?", "", generated_code)
-      generated_code <- trimws(generated_code)
-
-      return(generated_code)
     } else {
-      stop("No code in API response")
+      # OpenAI-compatible API
+      endpoint <- paste0(base_url, "/chat/completions")
+      request_body <- list(
+        model = model,
+        messages = list(
+          list(role = "system", content = system_prompt),
+          list(role = "user", content = user_message)
+        ),
+        temperature = 0.3,
+        max_tokens = 1024
+      )
+
+      response <- httr2::request(endpoint) %>%
+        httr2::req_headers(
+          "Content-Type" = "application/json",
+          "Authorization" = paste("Bearer", api_key)
+        ) %>%
+        httr2::req_body_json(request_body) %>%
+        httr2::req_timeout(60) %>%
+        httr2::req_retry(max_tries = 2) %>%
+        httr2::req_error(is_error = function(resp) FALSE) %>%
+        httr2::req_perform()
+
+      status <- httr2::resp_status(response)
+      result <- httr2::resp_body_json(response, simplifyVector = FALSE)
+
+      if (status != 200) {
+        error_msg <- if (!is.null(result$error$message)) result$error$message else paste("HTTP", status)
+        stop(paste("API Error:", error_msg))
+      }
+
+      if (!is.null(result$choices) && length(result$choices) > 0) {
+        generated_code <- result$choices[[1]]$message$content
+      } else {
+        stop("No code in API response")
+      }
     }
+
+    # Clean up markdown artifacts
+    generated_code <- gsub("```r\\n?", "", generated_code)
+    generated_code <- gsub("```\\n?", "", generated_code)
+    generated_code <- trimws(generated_code)
+
+    return(generated_code)
 
   }, error = function(e) {
-    # Return error as printable code
     error_code <- paste0(
       "# LLM Error: ", e$message, "\n",
       "print('Code generation failed: ", gsub("'", "\\\\'", e$message), "')"
@@ -111,7 +217,7 @@ llm_generate_r_code <- function(user_query, schema_text, base_url, api_key) {
 }
 
 # Code generation router function
-generate_code_with_mode <- function(user_query, schema_text, use_llm, base_url = NULL, api_key = NULL) {
+generate_code_with_mode <- function(user_query, schema_text, use_llm, base_url = NULL, api_key = NULL, model = "gpt-4") {
   if (use_llm) {
     # Validate LLM credentials
     if (is.null(base_url) || base_url == "" || is.null(api_key) || api_key == "") {
@@ -124,7 +230,7 @@ generate_code_with_mode <- function(user_query, schema_text, use_llm, base_url =
     }
 
     # Use LLM
-    return(llm_generate_r_code(user_query, schema_text, base_url, api_key))
+    return(llm_generate_r_code(user_query, schema_text, base_url, api_key, model))
   } else {
     # Use rule-based
     return(generate_r_code(user_query, schema_text))

@@ -129,21 +129,19 @@ server_chat <- function(input, output, session,
     is_preset_mode <- !is.null(preset_id)
 
     if (!is_preset_mode) {
-      # Free text mode
       req(input$user_input)
-      if (length(selected_ids) == 0) {
-        shinyjs::runjs("alert('Please select at least one dataset from the left list.')")
-        return()
-      }
-
       user_msg <- input$user_input
       if (user_msg == "") return()
 
-      # Progress indicator
-      progress <- Progress$new(session, min = 0, max = 3)
-      on.exit(progress$close())
+      use_llm <- isTRUE(input$use_llm)
 
-      progress$set(message = "Processing query", value = 1)
+      # Parse selected provider: "base_url::model"
+      provider_val <- input$llm_provider
+      provider_parts <- if (!is.null(provider_val) && grepl("::", provider_val, fixed = TRUE)) {
+        strsplit(provider_val, "::", fixed = TRUE)[[1]]
+      } else {
+        c("", "")
+      }
 
       # Add user message
       messages$list[[length(messages$list) + 1]] <- list(
@@ -152,108 +150,135 @@ server_chat <- function(input, output, session,
         timestamp = Sys.time()
       )
 
-      progress$set(message = "Generating code", value = 2)
+      if (use_llm) {
+        # ----- LLM chat mode: send conversation history to API -----
+        progress <- Progress$new(session, min = 0, max = 2)
+        on.exit(progress$close())
+        progress$set(message = "Sending to LLM...", value = 1)
 
-      # Build selected sources list by type
-      sources_list <- list()
-      for (sid in selected_ids) {
-        src <- data_sources$sources[[sid]]
-        if (is.null(src)) next
-        if (src$type == "nodes") sources_list$nodes <- src
-        if (src$type == "edges") sources_list$edges <- src
-        if (src$type == "metadata") sources_list$metadata <- src
-      }
+        # Build conversation history from messages (user + assistant only)
+        chat_history <- Filter(
+          function(msg) msg$role %in% c("user", "assistant"),
+          messages$list
+        )
 
-      # Generate schema text for LLM context - from all available sources
-      schema_text <- if (length(selected_ids) > 0) {
-        schema_parts <- c()
-        for (source_id in selected_ids) {
-          source <- data_sources$sources[[source_id]]
-          schema_parts <- c(schema_parts, paste0(
-            "[", toupper(source$type), "] ", source$name, " (", source$row_count, "x", source$col_count, ")\n",
-            source$schema_text
-          ))
-        }
-        paste(schema_parts, collapse = "\n\n")
+        reply <- llm_chat(
+          conversation_history = chat_history,
+          base_url = provider_parts[1],
+          api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+          model = provider_parts[2]
+        )
+
+        progress$set(message = "Done", value = 2)
+
+        messages$list[[length(messages$list) + 1]] <- list(
+          role = "assistant",
+          content = reply,
+          timestamp = Sys.time()
+        )
+
+        updateTextAreaInput(session, "user_input", value = "")
+
       } else {
-        "No selected datasets."
-      }
+        # ----- Rule-based code gen mode -----
+        if (length(selected_ids) == 0) {
+          shinyjs::runjs("alert('Please select at least one dataset from the left list.')")
+          return()
+        }
 
-      # Generate R code (rule-based mode)
-      generated_code <- generate_code_with_mode(
-        user_query = user_msg,
-        schema_text = schema_text,
-        use_llm = FALSE
-      )
+        progress <- Progress$new(session, min = 0, max = 3)
+        on.exit(progress$close())
 
-      artifacts$generated_code <- generated_code
+        progress$set(message = "Generating code", value = 1)
 
-      progress$set(message = "Executing code", value = 3)
+        # Build selected sources list by type
+        sources_list <- list()
+        for (sid in selected_ids) {
+          src <- data_sources$sources[[sid]]
+          if (is.null(src)) next
+          if (src$type == "nodes") sources_list$nodes <- src
+          if (src$type == "edges") sources_list$edges <- src
+          if (src$type == "metadata") sources_list$metadata <- src
+        }
 
-      # Execute the code safely with selected sources
-      exec_result <- execute_user_code(generated_code, sources_list = sources_list)
+        # Generate schema text for LLM context
+        schema_text <- if (length(selected_ids) > 0) {
+          schema_parts <- c()
+          for (source_id in selected_ids) {
+            source <- data_sources$sources[[source_id]]
+            schema_parts <- c(schema_parts, paste0(
+              "[", toupper(source$type), "] ", source$name, " (", source$row_count, "x", source$col_count, ")\n",
+              source$schema_text
+            ))
+          }
+          paste(schema_parts, collapse = "\n\n")
+        } else {
+          "No selected datasets."
+        }
 
-      # Store results
-      artifacts$result_table <- exec_result$result_table
-      artifacts$result_plot <- exec_result$result_plot
-      artifacts$hide_colnames <- FALSE
+        progress$set(message = "Generating code", value = 2)
 
-      # Create run record with source tracking
-      run_id <- paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+        generated_code <- generate_r_code(user_msg, schema_text)
+        artifacts$generated_code <- generated_code
 
-      run_record <- list(
-        run_id = run_id,
-        timestamp = Sys.time(),
-        user_query = user_msg,
-        generated_code = generated_code,
-        mode = "Rule-based",
-        sources_used = list(
-          nodes = selected_sources$nodes_id,
-          edges = selected_sources$edges_id,
-          metadata = selected_sources$metadata_id
-        ),
-        execution_status = if (exec_result$success) "success" else "failure",
-        error_message = if (!exec_result$success) exec_result$output else NULL,
-        artifacts = list(
-          table_artifact = list(
-            exists = !is.null(exec_result$result_table),
-            full = exec_result$result_table
+        progress$set(message = "Executing code", value = 3)
+
+        exec_result <- execute_user_code(generated_code, sources_list = sources_list)
+
+        artifacts$result_table <- exec_result$result_table
+        artifacts$result_plot <- exec_result$result_plot
+        artifacts$hide_colnames <- FALSE
+
+        # Create run record
+        run_id <- paste0("run_", format(Sys.time(), "%Y%m%d_%H%M%S_%OS3"))
+        run_record <- list(
+          run_id = run_id,
+          timestamp = Sys.time(),
+          user_query = user_msg,
+          generated_code = generated_code,
+          mode = "Rule-based",
+          sources_used = list(
+            nodes = selected_sources$nodes_id,
+            edges = selected_sources$edges_id,
+            metadata = selected_sources$metadata_id
           ),
-          plot_artifact = list(
-            exists = !is.null(exec_result$result_plot),
-            plot_object = exec_result$result_plot
+          execution_status = if (exec_result$success) "success" else "failure",
+          error_message = if (!exec_result$success) exec_result$output else NULL,
+          artifacts = list(
+            table_artifact = list(
+              exists = !is.null(exec_result$result_table),
+              full = exec_result$result_table
+            ),
+            plot_artifact = list(
+              exists = !is.null(exec_result$result_plot),
+              plot_object = exec_result$result_plot
+            )
           )
         )
-      )
+        run_history$runs[[length(run_history$runs) + 1]] <- run_record
 
-      # Store in history
-      run_history$runs[[length(run_history$runs) + 1]] <- run_record
+        assistant_response <- paste0(
+          "Generated R code for your query:\n\n",
+          "```r\n", generated_code, "\n```\n\n",
+          "(See 'Generated R Code' and 'Logs' tabs for execution details)"
+        )
 
-      # Generate assistant response with code reference
-      assistant_response <- paste0(
-        "Generated R code for your query:\n\n",
-        "```r\n", generated_code, "\n```\n\n",
-        "(See 'Generated R Code' and 'Logs' tabs for execution details)"
-      )
+        messages$list[[length(messages$list) + 1]] <- list(
+          role = "assistant",
+          content = assistant_response,
+          timestamp = Sys.time()
+        )
 
-      # Add assistant message
-      messages$list[[length(messages$list) + 1]] <- list(
-        role = "assistant",
-        content = assistant_response,
-        timestamp = Sys.time()
-      )
+        artifacts$logs <- paste(
+          artifacts$logs,
+          paste0("[", format(Sys.time(), "%H:%M:%S"), "] User: ", user_msg),
+          paste0("[", format(Sys.time(), "%H:%M:%S"), "] Code executed"),
+          paste0("Output:\n", exec_result$output),
+          sep = "\n"
+        )
 
-      # Update logs with code and execution output
-      artifacts$logs <- paste(
-        artifacts$logs,
-        paste0("[", format(Sys.time(), "%H:%M:%S"), "] User: ", user_msg),
-        paste0("[", format(Sys.time(), "%H:%M:%S"), "] Code executed"),
-        paste0("Output:\n", exec_result$output),
-        sep = "\n"
-      )
-
-      # Clear input
-      updateTextAreaInput(session, "user_input", value = "")
+        updateTextAreaInput(session, "user_input", value = "")
+      }
 
     } else {
       # Preset mode
