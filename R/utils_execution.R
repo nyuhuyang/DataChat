@@ -28,17 +28,44 @@ execute_user_code <- function(code, data = NULL, sources_list = NULL) {
     assign("df", data, envir = exec_env)
   }
 
-  # Load required packages into the execution environment
+  # Make common data/plot helpers available without attaching packages.
   tryCatch({
-    eval(quote(library(dplyr, warn.conflicts = FALSE)), envir = exec_env)
-    eval(quote(library(ggplot2)), envir = exec_env)
-    eval(quote(library(tibble)), envir = exec_env)
-    eval(quote(library(networkD3)), envir = exec_env)
+    eval(quote({
+      `%>%` <- dplyr::`%>%`
+      across <- dplyr::across
+      arrange <- dplyr::arrange
+      filter <- dplyr::filter
+      group_by <- dplyr::group_by
+      left_join <- dplyr::left_join
+      mutate <- dplyr::mutate
+      rename <- dplyr::rename
+      select <- dplyr::select
+      summarise <- dplyr::summarise
+      tibble <- tibble::tibble
+      ggplot <- ggplot2::ggplot
+      aes <- ggplot2::aes
+      aes_string <- ggplot2::aes_string
+      geom_blank <- ggplot2::geom_blank
+      geom_histogram <- ggplot2::geom_histogram
+      geom_line <- ggplot2::geom_line
+      geom_point <- ggplot2::geom_point
+      ggtitle <- ggplot2::ggtitle
+      labs <- ggplot2::labs
+      theme <- ggplot2::theme
+      theme_minimal <- ggplot2::theme_minimal
+      theme_void <- ggplot2::theme_void
+      element_text <- ggplot2::element_text
+      forceNetwork <- networkD3::forceNetwork
+    }), envir = exec_env)
     if (requireNamespace("stringr", quietly = TRUE)) {
-      eval(quote(library(stringr)), envir = exec_env)
+      eval(quote({
+        str_detect <- stringr::str_detect
+        str_replace <- stringr::str_replace
+        str_to_lower <- stringr::str_to_lower
+      }), envir = exec_env)
     }
   }, error = function(e) {
-    cat("Warning: Error loading packages:", e$message, "\n")
+    cat("Warning: Error preparing execution environment:", e$message, "\n")
   })
 
   # Capture output and execute code

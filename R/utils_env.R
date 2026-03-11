@@ -3,7 +3,7 @@
 # ============================================================================
 
 load_dotenv <- function() {
-  env_file <- file.path(getwd(), ".env")
+  env_file <- datachat_file(".env")
   if (!file.exists(env_file)) {
     cat("[.env] Not found at:", env_file, "\n")
     return(invisible(FALSE))
