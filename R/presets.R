@@ -25,7 +25,7 @@ list_presets <- function() {
     ),
     list(
       id = "node_edge_join_summary",
-      label = "Node–Edge: node_type_pair summary",
+      label = "Node-Edge: node_type_pair summary",
       file = "node_edge_join_summary.R",
       description = "Analyze node type pairs across edges and nodes"
     ),
@@ -52,7 +52,7 @@ list_presets <- function() {
 
 # Get full path to a template file
 get_template_path <- function(template_file) {
-  file.path("R", "templates", template_file)
+  datachat_file("R", "templates", template_file, package_subdir = "templates")
 }
 
 # Load template code as a string
@@ -146,12 +146,6 @@ load_template <- function(preset_id) {
 #   selected: character vector of source_ids to use
 #   params: optional list of parameters (e.g., top_n = 20)
 execute_template <- function(code, datasets, selected, params = list()) {
-  # Load required packages into parent environment first
-  library(dplyr, warn.conflicts = FALSE)
-  library(ggplot2)
-  library(tibble)
-  library(networkD3)
-
   # Create execution environment with base parent (allows package access)
   exec_env <- new.env(parent = .BaseNamespaceEnv)
 

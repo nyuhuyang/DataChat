@@ -2,10 +2,6 @@
 # Dataset profiling: summarize data and persist profile artifacts
 # ============================================================================
 
-`%||%` <- function(x, y) {
-  if (is.null(x) || length(x) == 0) y else x
-}
-
 sanitize_profile_stem <- function(filename) {
   stem <- tools::file_path_sans_ext(basename(filename))
   stem <- gsub("[^A-Za-z0-9._-]+", "_", stem)
@@ -15,7 +11,7 @@ sanitize_profile_stem <- function(filename) {
   stem
 }
 
-get_profile_cache_paths <- function(filename, output_dir = file.path("data", "output", "profiles")) {
+get_profile_cache_paths <- function(filename, output_dir = datachat_profiles_dir()) {
   profile_stem <- paste0(sanitize_profile_stem(filename), "_profile")
   list(
     profile_stem = profile_stem,
@@ -216,7 +212,7 @@ generate_combined_profile_summary <- function(entries, dataset_name) {
 
 write_combined_dataset_profile <- function(profile_entries, dataset_name,
                                            file_path = NULL,
-                                           output_dir = file.path("data", "output", "profiles")) {
+                                           output_dir = datachat_profiles_dir()) {
   dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
   cache_paths <- get_profile_cache_paths(dataset_name, output_dir)
   file_signature <- get_profile_file_signature(file_path)

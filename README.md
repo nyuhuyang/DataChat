@@ -74,7 +74,7 @@ DataChat/
 
 ## Documentation
 
-See [CLAUDE.md](CLAUDE.md) for the complete technical reference including:
+Internal developer notes cover the following implementation areas:
 - LLM integration details (Anthropic + OpenAI-compatible APIs)
 - Dataset profiling system
 - Preset/template system and how to add new ones

@@ -1,0 +1,33 @@
+Package: DataChat
+Type: Package
+Title: Conversational Data Analysis Shiny App
+Version: 0.0.0.9000
+Authors@R: person("Yang", "Hu", email = "hu.yang@nyu.edu", role = c("aut", "cre"))
+Description: A Shiny application for conversational exploratory data analysis,
+    multi-source dataset loading, preset analyses, and LLM-assisted R code
+    generation.
+License: MIT + file LICENSE
+Encoding: UTF-8
+LazyData: true
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Depends:
+    R (>= 4.1.0)
+Imports:
+    bslib,
+    dplyr,
+    DT,
+    ggplot2,
+    httr2,
+    networkD3,
+    readr,
+    readxl,
+    shiny,
+    shinyjs,
+    tibble,
+    tools
+Suggests:
+    arrow,
+    stringr,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3

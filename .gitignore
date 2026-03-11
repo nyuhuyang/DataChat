@@ -12,3 +12,4 @@ data/output/
 .config/rstudio
 .local/share/rstudio
 .env
+CLAUDE.md
