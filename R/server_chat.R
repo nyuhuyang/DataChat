@@ -135,14 +135,20 @@ server_chat <- function(input, output, session,
       user_msg <- input$user_input
       if (user_msg == "") return()
 
-      use_llm <- isTRUE(input$use_llm)
-
       # Parse selected provider: "base_url::model"
       provider_val <- input$llm_provider
       provider_parts <- if (!is.null(provider_val) && grepl("::", provider_val, fixed = TRUE)) {
         strsplit(provider_val, "::", fixed = TRUE)[[1]]
       } else {
         c("", "")
+      }
+
+      # Only configured providers may receive a key; otherwise use rule-based mode
+      invisible(capture.output(providers <- get_llm_providers()))
+      configured <- isTRUE(provider_val %in% unlist(providers))
+      use_llm <- isTRUE(input$use_llm) && configured && nzchar(llm_api_key(provider_parts[1]))
+      if (isTRUE(input$use_llm) && !use_llm) {
+        showNotification("No usable LLM provider configured; using rule-based mode.", type = "warning")
       }
 
       # Add user message
@@ -195,7 +201,7 @@ server_chat <- function(input, output, session,
           reply <- llm_chat(
             conversation_history = chat_history,
             base_url = provider_parts[1],
-            api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+            api_key = llm_api_key(provider_parts[1]),
             model = provider_parts[2],
             dataset_context = dataset_context
           )
@@ -231,7 +237,7 @@ server_chat <- function(input, output, session,
             user_query = user_msg,
             schema_text = dataset_context,
             base_url = provider_parts[1],
-            api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+            api_key = llm_api_key(provider_parts[1]),
             model = provider_parts[2]
           )
           artifacts$generated_code <- generated_code
@@ -250,7 +256,7 @@ server_chat <- function(input, output, session,
             generated_code = generated_code,
             exec_result = exec_result,
             base_url = provider_parts[1],
-            api_key = Sys.getenv("DATACHAT_API_KEY", ""),
+            api_key = llm_api_key(provider_parts[1]),
             model = provider_parts[2]
           )
 

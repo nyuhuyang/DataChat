@@ -13,3 +13,4 @@ data/output/
 .local/share/rstudio
 .env
 CLAUDE.md
+rsconnect/

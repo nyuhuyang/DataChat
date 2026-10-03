@@ -32,3 +32,12 @@ test_that("build_execution_summary_text summarizes tables and plot classes", {
   expect_match(summary_text, "Result table: 2 rows x 2 columns")
   expect_match(summary_text, "Result plot class: ggplot, plot")
 })
+
+test_that("openai_sampling_params uses max_completion_tokens only for api.openai.com", {
+  official <- openai_sampling_params("https://api.openai.com/v1", temperature = 0.3)
+  expect_equal(names(official), "max_completion_tokens")
+
+  compatible <- openai_sampling_params("https://example.com/v1", temperature = 0.3)
+  expect_equal(compatible, list(max_tokens = 1024, temperature = 0.3))
+  expect_equal(openai_sampling_params("https://example.com/v1"), list(max_tokens = 1024))
+})
