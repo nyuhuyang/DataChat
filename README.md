@@ -4,8 +4,11 @@
 [![R](https://img.shields.io/badge/R-%3E%3D%204.1-brightgreen)](https://www.r-project.org/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![R-CMD-check](https://github.com/nyuhuyang/DataChat/actions/workflows/R-CMD-check.yaml/badge.svg?branch=master)](https://github.com/nyuhuyang/DataChat/actions/workflows/R-CMD-check.yaml)
+[![Live demo](https://img.shields.io/badge/Live%20demo-shinyapps.io-447099)](https://nyuhuyang.shinyapps.io/DataChat/)
 
 **Conversational Data Analysis Interface** – An interactive R Shiny app for exploratory data analysis via natural language chat.
+
+**Live demo:** <https://nyuhuyang.shinyapps.io/DataChat/> (password-protected; ask the maintainer for access)
 
 ## Overview
 
