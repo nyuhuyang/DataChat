@@ -16,3 +16,11 @@
 ^ui$
 ^R/templates$
 ^data$
+^.*\.Rproj$
+^\.Rproj\.user$
+^deploy\.R$
+^R/_disable_autoload\.R$
+^rsconnect$
+^docs$
+^AGENTS\.md$
+^\.github$

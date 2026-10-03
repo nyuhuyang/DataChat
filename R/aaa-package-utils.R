@@ -2,7 +2,16 @@
   if (is.null(x) || length(x) == 0) y else x
 }
 
+# app.R sets datachat.app_root so a checkout launch never uses an installed copy.
+datachat_app_root <- function() {
+  getOption("datachat.app_root", "")
+}
+
 datachat_project_root <- function() {
+  if (nzchar(datachat_app_root())) {
+    return(datachat_app_root())
+  }
+
   pkg_path <- system.file(package = "DataChat")
   if (nzchar(pkg_path)) {
     return(normalizePath(pkg_path, winslash = "/", mustWork = TRUE))
@@ -12,7 +21,7 @@ datachat_project_root <- function() {
 }
 
 datachat_file <- function(..., package_subdir = NULL, must_work = FALSE) {
-  if (!is.null(package_subdir)) {
+  if (!is.null(package_subdir) && !nzchar(datachat_app_root())) {
     pkg_path <- system.file(package_subdir, ..., package = "DataChat")
     if (nzchar(pkg_path)) {
       return(pkg_path)
@@ -26,7 +35,7 @@ datachat_app_data_dir <- function() {
   installed_pkg_path <- system.file(package = "DataChat")
   project_data_dir <- file.path(datachat_project_root(), "data")
 
-  if (!nzchar(installed_pkg_path) && dir.exists(project_data_dir)) {
+  if ((nzchar(datachat_app_root()) || !nzchar(installed_pkg_path)) && dir.exists(project_data_dir)) {
     return(normalizePath(project_data_dir, winslash = "/", mustWork = TRUE))
   }
 

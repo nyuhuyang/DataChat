@@ -3,10 +3,27 @@
 # ============================================================================
 
 # Optional: arrow for parquet support
-if (!require("arrow", quietly = TRUE)) {
-  arrow_available <- FALSE
-} else {
-  arrow_available <- TRUE
+arrow_available <- requireNamespace("arrow", quietly = TRUE)
+
+# Basename of a client-supplied upload name, made unique against `taken`
+# (stem.ext, stem_2.ext, stem_3.ext, ...).
+unique_upload_name <- function(client_name, taken = character(0)) {
+  name <- basename(client_name %||% "")
+  if (is.na(name) || name %in% c("", ".", "..")) name <- "upload"
+  ext <- tools::file_ext(name)
+  stem <- tools::file_path_sans_ext(name)
+  # ponytail: cap stem so suffixes like "_2" and "_profile.md" stay under 255 bytes
+  if (nchar(stem, type = "bytes") > 100) {
+    stem <- strtrim(stem, 100)
+    name <- if (nzchar(ext)) paste0(stem, ".", ext) else stem
+  }
+  if (!(name %in% taken)) {
+    return(name)
+  }
+  suffix <- if (nzchar(ext)) paste0(".", ext) else ""
+  i <- 2
+  while (paste0(stem, "_", i, suffix) %in% taken) i <- i + 1
+  paste0(stem, "_", i, suffix)
 }
 
 # ============================================================================

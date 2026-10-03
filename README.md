@@ -28,9 +28,16 @@ DataChat combines a chat interface with intelligent code generation to make data
 
 ```r
 install.packages(c(
-  "shiny", "bslib", "DT", "ggplot2", "dplyr", "httr2",
-  "readr", "readxl", "shinyjs", "networkD3"
+  "shiny", "bslib", "DT", "ggplot2", "dplyr", "httr2", "tibble",
+  "readr", "readxl", "shinyjs", "networkD3", "rsconnect"
 ))
+```
+
+Use an R installation that actually has these packages. On this machine the
+`Rscript` first on `PATH` (Homebrew R) does not; the conda env does:
+
+```bash
+RS="env -u R_HOME $HOME/miniforge3/envs/r-4.5/bin/Rscript"
 ```
 
 ### 2. Configure LLM (Optional)
@@ -38,15 +45,23 @@ install.packages(c(
 Create a `.env` file in the project root:
 
 ```bash
-DATACHAT_API_KEY=your-api-key-here
-DATACHAT_LLM_Claude=https://api.anthropic.com/v1|claude-sonnet-4-20250514
+# OpenAI-compatible providers use DATACHAT_API_KEY
+DATACHAT_API_KEY=your-openai-key
+# Anthropic providers use DATACHAT_ANTHROPIC_API_KEY
+DATACHAT_ANTHROPIC_API_KEY=your-anthropic-key
+# Provider list: DATACHAT_LLM_<label>=<base_url>|<model>
+DATACHAT_LLM_Claude=https://api.anthropic.com/v1|claude-sonnet-4-5
 DATACHAT_LLM_OpenAI_GPT4o=https://api.openai.com/v1|gpt-4o
+# Password gate (required on shinyapps.io; optional locally)
+DATACHAT_APP_PASSWORD=choose-a-password
 ```
+
+Providers without a matching key are hidden from the dropdown.
 
 ### 3. Launch
 
-```r
-shiny::runApp("app.R")
+```bash
+$RS -e 'shiny::runApp("app.R")'
 ```
 
 ### 4. Try It Out
@@ -57,15 +72,46 @@ shiny::runApp("app.R")
 - Type `/schema_check` to inspect data quality
 - Enable LLM mode in the sidebar for natural language queries
 
+## Deploy to shinyapps.io
+
+`deploy.R` uploads an explicit whitelist: `app.R`, `.env`, `DESCRIPTION`,
+`NAMESPACE`, `R/`, `R/templates/`, and the small demo files in `data/input/`
+(the 250 MB `SPOKE_edges.csv`, cached outputs, and local tool folders are excluded).
+
+```bash
+$RS deploy.R --dry-run                                  # review files + size
+SHINYAPPS_ACCOUNT=<your-account> $RS deploy.R           # deploy
+```
+
+- shinyapps.io has no environment-variable settings, so `.env` ships with the
+  bundle. Use dedicated, spend-capped API keys.
+- `deploy.R` refuses to run unless `.env` sets `DATACHAT_APP_PASSWORD`; on
+  shinyapps.io the app also refuses to start without it. Use a long random
+  value (e.g. `openssl rand -base64 24`): the login cooldown is per session, so
+  password strength is the real protection against guessing.
+- Uploaded files are listed only in the uploading session and deleted when it
+  ends (generated code runs in the shared app process, so it is not a hard
+  isolation boundary between logged-in users).
+- The password gate stops the app's own logic, but Shiny's built-in upload
+  endpoint still accepts files (up to `shiny.maxRequestSize`, default 5 MB)
+  into its temp dir before login; they are discarded when the session ends.
+- Known limitation: analysis binds at most one dataset per type (`df_nodes`,
+  `df_edges`, `df_metadata`). Checking two files of the same type (e.g. two
+  plain CSVs) shows both profiles to the LLM, but generated code only sees the
+  last one. Presets (`/schema_check`, `/head`) do see every checked file.
+- **Security:** LLM-generated R code runs inside the app process and can read
+  environment variables (including API keys). Only share the password with
+  people you trust with those keys.
+
 ## Architecture
 
 ```
 DataChat/
-├── app.R                    # Thin orchestrator
+├── app.R                    # Source launcher (local + shinyapps.io)
+├── deploy.R                 # shinyapps.io deploy with file whitelist
 ├── .env                     # API keys + providers (gitignored)
-├── ui/                      # UI component functions
-├── server/                  # Server logic functions
 ├── R/
+│   ├── ui_*.R / server_*.R  # Shiny UI and server modules
 │   ├── utils_env.R          # .env loader
 │   ├── utils_code_gen.R     # Rule-based + LLM code generation
 │   ├── utils_profiles.R     # Dataset profiling + caching

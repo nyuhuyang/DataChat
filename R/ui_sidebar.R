@@ -2,7 +2,17 @@
 # UI: Sidebar panel with data loader
 # ============================================================================
 
-# Parse DATACHAT_LLM_* env vars into a named list of "base_url::model" values
+# Anthropic keys differ from OpenAI-compatible keys, so route by base URL.
+llm_api_key <- function(base_url) {
+  if (grepl("anthropic", base_url %||% "", ignore.case = TRUE)) {
+    Sys.getenv("DATACHAT_ANTHROPIC_API_KEY", "")
+  } else {
+    Sys.getenv("DATACHAT_API_KEY", "")
+  }
+}
+
+# Parse DATACHAT_LLM_* env vars into a named list of "base_url::model" values.
+# Providers without a matching API key are skipped.
 get_llm_providers <- function() {
   all_env <- Sys.getenv()
   llm_vars <- names(all_env)[grepl("^DATACHAT_LLM_", names(all_env))]
@@ -24,7 +34,9 @@ get_llm_providers <- function() {
     val <- all_env[[var]]
     # Value format in .env: base_url|model → store as base_url::model
     parts <- strsplit(val, "[|]")[[1]]
-    if (length(parts) == 2) {
+    if (length(parts) == 2 && !nzchar(llm_api_key(parts[1]))) {
+      cat("[providers]", label, "skipped: no API key for", parts[1], "\n")
+    } else if (length(parts) == 2) {
       providers[[label]] <- paste0(parts[1], "::", parts[2])
       cat("[providers]", label, "->", parts[1], "|", parts[2], "\n")
     }
@@ -33,8 +45,8 @@ get_llm_providers <- function() {
 }
 
 ui_sidebar <- function() {
-  has_env_key <- nzchar(Sys.getenv("DATACHAT_API_KEY", ""))
   providers <- get_llm_providers()
+  has_env_key <- length(providers) > 0
 
   sidebar(
     # Data Loader Section
@@ -54,7 +66,7 @@ ui_sidebar <- function() {
     # LLM Configuration Section
     hr(style = "margin: 15px 0;"),
     h5("LLM Settings"),
-    checkboxInput("use_llm", "Enable LLM mode", value = TRUE),
+    checkboxInput("use_llm", "Enable LLM mode", value = has_env_key),
     if (!is.null(providers) && length(providers) > 0) {
       selectInput(
         "llm_provider",
@@ -63,12 +75,12 @@ ui_sidebar <- function() {
       )
     } else {
       helpText(
-        "No providers configured. Add DATACHAT_LLM_* to .env",
+        "No usable providers. Add DATACHAT_LLM_* and matching API keys to .env",
         style = "font-size: 11px; color: #dc3545;"
       )
     },
     helpText(
-      if (has_env_key) "API key loaded from .env" else "Set DATACHAT_API_KEY in .env file",
+      if (has_env_key) "API key loaded from .env" else "Set DATACHAT_API_KEY / DATACHAT_ANTHROPIC_API_KEY in .env",
       style = paste0("font-size: 11px; color: ", if (has_env_key) "#28a745;" else "#dc3545;")
     ),
     fill = FALSE

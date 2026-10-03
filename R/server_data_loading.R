@@ -7,6 +7,26 @@ server_data_loading <- function(input, output, session,
                                  active_dataset, active_dataset_metadata,
                                  messages, artifacts, data_load_msg,
                                  kg_ready, files_refresh) {
+  # Uploads stay private to this session and are deleted when it ends.
+  session_upload_dir <- file.path(tempdir(), "datachat-uploads", session$token)
+  session$onSessionEnded(function() unlink(session_upload_dir, recursive = TRUE))
+  auto_select <- character(0)
+
+  # Uploads keep their profile inside the session dir; bundled files use the shared cache
+  profile_dir_for <- function(file_path) {
+    if (identical(normalizePath(dirname(file_path), mustWork = FALSE),
+                  normalizePath(session_upload_dir, mustWork = FALSE))) {
+      file.path(session_upload_dir, "profiles", basename(file_path))
+    } else {
+      datachat_profiles_dir()
+    }
+  }
+
+  list_files_only <- function(dir) {
+    files <- list.files(dir, full.names = TRUE, all.files = TRUE, no.. = TRUE)
+    files[!dir.exists(files)]
+  }
+
   register_loaded_entry <- function(entry, messages, artifacts, data_load_msg,
                                     data_sources, selected_sources,
                                     active_dataset, active_dataset_metadata,
@@ -128,7 +148,8 @@ server_data_loading <- function(input, output, session,
     })
   }
 
-  build_shared_profile_info <- function(entries, source_file_name, source_file_path) {
+  build_shared_profile_info <- function(entries, source_file_name, source_file_path,
+                                        output_dir = profile_dir_for(source_file_path)) {
     valid_entries <- Filter(function(entry) {
       isTRUE(entry$preview_result$success) &&
         !("error" %in% names(entry$data) && isTRUE(entry$data$error))
@@ -153,27 +174,22 @@ server_data_loading <- function(input, output, session,
     write_combined_dataset_profile(
       profile_entries = profile_entries,
       dataset_name = source_file_name,
-      file_path = source_file_path
+      file_path = source_file_path,
+      output_dir = output_dir
     )
   }
 
-  # List existing files in data/input folder
+  # This session's uploads, then bundled files in data/input
   list_input_files <- reactive({
     files_refresh()
-    input_dir <- datachat_input_dir()
-    if (!dir.exists(input_dir)) {
-      return(NULL)
-    }
-
-    files <- list.files(input_dir, full.names = TRUE)
+    newest_first <- function(files) files[order(file.info(files)$mtime, decreasing = TRUE)]
+    bundled <- list.files(datachat_input_dir(), full.names = TRUE)  # skips dotfiles like .DS_Store
+    files <- c(newest_first(list_files_only(session_upload_dir)), newest_first(bundled[!dir.exists(bundled)]))
 
     if (length(files) == 0) {
       return(NULL)
     }
-
-    # Sort by modification time (newest first)
-    files <- files[order(file.info(files)$mtime, decreasing = TRUE)]
-    return(files)
+    files
   })
 
   # UI to show existing files (checkbox list)
@@ -186,11 +202,7 @@ server_data_loading <- function(input, output, session,
     file_labels <- lapply(files, function(file_path) {
       file_name <- basename(file_path)
       file_size <- round(file.info(file_path)$size / 1024, 1) # KB
-      HTML(sprintf(
-        "%s<br><small style='color:#666;'>%s KB</small>",
-        file_name,
-        file_size
-      ))
+      tagList(file_name, tags$br(), tags$small(style = "color:#666;", paste(file_size, "KB")))
     })
 
     div(
@@ -199,7 +211,8 @@ server_data_loading <- function(input, output, session,
         NULL,
         choiceNames = file_labels,
         choiceValues = files,
-        selected = character(0)
+        # Keep current checks across re-renders and pre-check fresh uploads
+        selected = intersect(c(isolate(input$input_files_list), auto_select), files)
       )
     )
   })
@@ -249,8 +262,9 @@ server_data_loading <- function(input, output, session,
   })
 
   # Load selected files from data/input list (auto-detect node/edge)
-  observeEvent(input$input_files_list, {
-    selected_files <- input$input_files_list
+  observeEvent(input$input_files_list, ignoreNULL = FALSE, {
+    # Only paths this session can see (bundled + own uploads) are accepted
+    selected_files <- intersect(input$input_files_list, isolate(list_input_files()))
     if (is.null(selected_files) || length(selected_files) == 0) {
       artifacts$selected_files <- character(0)
       return()
@@ -298,13 +312,23 @@ server_data_loading <- function(input, output, session,
     req(input$file_input)
 
     file_path <- input$file_input$datapath
-    file_name <- input$file_input$name
+    # Every existing entry (files and the profiles/ dir) is taken
+    taken <- c(
+      basename(list_files_only(datachat_input_dir())),
+      list.files(session_upload_dir, all.files = TRUE, no.. = TRUE),
+      "profiles"
+    )
+    file_name <- unique_upload_name(input$file_input$name, taken)
 
-    # Copy uploaded file to data/input directory
-    dir.create(datachat_input_dir(), showWarnings = FALSE, recursive = TRUE)
-    input_path <- file.path(datachat_input_dir(), file_name)
-    file.copy(file_path, input_path, overwrite = TRUE)
+    # Copy uploaded file to this session's private directory
+    dir.create(session_upload_dir, showWarnings = FALSE, recursive = TRUE)
+    input_path <- file.path(session_upload_dir, file_name)
+    if (file.exists(input_path) || !file.copy(file_path, input_path, overwrite = FALSE)) {
+      data_load_msg(paste("\u274c Error: could not store upload", file_name))
+      return()
+    }
     cat("[", format(Sys.time(), "%H:%M:%S"), "] File copied to", input_path, "\n")
+    auto_select <<- input_path
     files_refresh(files_refresh() + 1)
 
     tryCatch({

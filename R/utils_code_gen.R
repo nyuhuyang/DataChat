@@ -2,6 +2,16 @@
 # Code generation: rule-based, LLM, and router
 # ============================================================================
 
+# Sampling params for /chat/completions. api.openai.com's newer (reasoning)
+# models reject max_tokens and non-default temperature, and reasoning tokens
+# count toward the limit; other OpenAI-compatible servers keep the classic params.
+openai_sampling_params <- function(base_url, temperature = NULL) {
+  if (grepl("api.openai.com", base_url, fixed = TRUE)) {
+    return(list(max_completion_tokens = 4096))
+  }
+  c(list(max_tokens = 1024), if (!is.null(temperature)) list(temperature = temperature))
+}
+
 # LLM chat with conversation history
 # conversation_history: list of list(role, content) pairs
 llm_chat <- function(conversation_history, base_url, api_key, model, dataset_context = NULL) {
@@ -58,10 +68,9 @@ llm_chat <- function(conversation_history, base_url, api_key, model, dataset_con
         list(list(role = "system", content = system_prompt)),
         api_messages
       )
-      body <- list(
-        model = model,
-        messages = openai_messages,
-        max_tokens = 1024
+      body <- c(
+        list(model = model, messages = openai_messages),
+        openai_sampling_params(base_url)
       )
       response <- httr2::request(endpoint) %>%
         httr2::req_headers(
@@ -175,14 +184,15 @@ llm_generate_r_code <- function(user_query, schema_text, base_url, api_key, mode
     } else {
       # OpenAI-compatible API
       endpoint <- paste0(base_url, "/chat/completions")
-      request_body <- list(
-        model = model,
-        messages = list(
-          list(role = "system", content = system_prompt),
-          list(role = "user", content = user_message)
+      request_body <- c(
+        list(
+          model = model,
+          messages = list(
+            list(role = "system", content = system_prompt),
+            list(role = "user", content = user_message)
+          )
         ),
-        temperature = 0.3,
-        max_tokens = 1024
+        openai_sampling_params(base_url, temperature = 0.3)
       )
 
       response <- httr2::request(endpoint) %>%
